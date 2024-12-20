@@ -29,9 +29,9 @@ const verifyTokens = (req, res) => {
       if (err) {
         return res.status(401).json({ loggedIn: false, message: 'Invalid Access Token' });
       }
-      console.log(decoded.email)
-      const user = await User.findOne({ where: { email:decoded.email } });
       
+      const user = await User.findOne({ where: { email:decoded.email } });
+     
       return res.json({ loggedIn: true, user: user.dataValues, message: 'Access Token valid' });
     });
   } catch (error) {
