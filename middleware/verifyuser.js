@@ -16,7 +16,7 @@ const verifyTokens = (req, res) => {
   try {
    
     const accessToken = req.cookies.accessToken;
-   
+  
     if (!accessToken) {
       if (renewToken(req, res)) {
         return res.json({ loggedIn: true, message: 'Token renewed successfully' });
