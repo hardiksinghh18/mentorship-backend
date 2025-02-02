@@ -30,6 +30,31 @@ app.use(cors({
   credentials: true,  // Allow cookies to be sent and received
 }));
 
+// SOCKET.IO IMPLEMENTATION
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_BASE_URL,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'], // Allow WebSockets
+}); 
+
+io.on('connection', (socket) => {
+  
+  console.log('A user connected:', socket.id);
+
+  // Handle incoming messages
+  socket.on('sendMessage', (data) => {
+    console.log(data)
+    io.emit('receiveMessage', data); // Broadcast message to all clients
+  });
+
+  socket.on('disconnect', () => { 
+    console.log('User disconnected:', socket.id);
+  });
+});
+   
 // Routes
 app.get('/',(req,res)=>{
   res.send('Welcome to Mentorship API');
@@ -49,30 +74,6 @@ app.use('/api/profile/update', profileRoutes);
 app.use('/api/connections', mentorshipRoutes);
 app.use('/api/chat', chatRoutes);
 
-// SOCKET.IO IMPLEMENTATION
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_BASE_URL,
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
-  transports: ['websocket', 'polling'], // Allow WebSockets
-});
-
-io.on('connection', (socket) => {
-  
-  console.log('A user connected:', socket.id);
-
-  // Handle incoming messages
-  socket.on('sendMessage', (data) => {
-    console.log(data)
-    io.emit('receiveMessage', data); // Broadcast message to all clients
-  });
-
-  socket.on('disconnect', () => { 
-    console.log('User disconnected:', socket.id);
-  });
-});
 
 
 server.listen(process.env.PORT || 5000, () => {
