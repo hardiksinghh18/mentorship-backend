@@ -20,7 +20,8 @@ const server = http.createServer(app);
 app.use(cookieParser());
 app.use(express.json());
 app.use(cors({
-  origin: process.env.FRONTEND_BASE_URL,  // Make sure FRONTEND_BASE_URL is set in your .env
+  origin: '*',  // Make sure FRONTEND_BASE_URL is set in your .env
+  // origin: process.env.FRONTEND_BASE_URL,  // Make sure FRONTEND_BASE_URL is set in your .env
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,  // Allow cookies to be sent and received
 }));
