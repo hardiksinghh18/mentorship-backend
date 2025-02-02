@@ -4,7 +4,7 @@ const User = require('../models/User');
 // Send mentorship request
 exports.sendRequest = async (req, res) => {
   try {
- 
+
     const { receiverId, senderId } = req.body;
 
     // Validate if senderId and receiverId are valid
@@ -31,22 +31,6 @@ exports.sendRequest = async (req, res) => {
   }
 };
 
-
-// // Accept or decline mentorship request
-// exports.respondToRequest = async (req, res) => {
-//   try {
-//     const { requestId, status } = req.body;
-//     const request = await MentorshipRequest.findByPk(requestId);
-
-//     if (!request) return res.status(404).json({ message: 'Request not found' });
-
-//     request.status = status;
-//     await request.save();
-//     res.json({ message: 'Request status updated', request });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// };
 
 
 exports.fetchRequests = async (req, res) => {
@@ -108,7 +92,7 @@ exports.fetchRequests = async (req, res) => {
 exports.respondToRequest = async (req, res) => {
   try {
     const { receiverId, senderId, status } = req.body;
-   
+
     // Validate incoming data
     if (!receiverId || !senderId || !status) {
       return res.status(400).json({ error: 'Receiver ID, Sender ID, and Status are required' });
@@ -129,10 +113,30 @@ exports.respondToRequest = async (req, res) => {
     }
 
     // If accepted, update request status
-    request.status = status;
-    const updatedConnection = await request.save();
+    if (status === 'accepted') {
+      request.status = 'accepted';
+      await request.save();
 
-    return res.json({ success: true, message: 'Request status updated', data: updatedConnection });
+      // Check if a reverse request already exists
+      const existingReverseRequest = await MentorshipRequest.findOne({ where: { senderId: receiverId, receiverId: senderId } });
+
+      if (!existingReverseRequest) {
+        // Create a reverse request to reflect the accepted status on both sides
+        await MentorshipRequest.create({
+          senderId: receiverId,
+          receiverId: senderId,
+          status: 'accepted',
+        });
+      } else {
+        // If the reverse request exists, update its status
+        existingReverseRequest.status = 'accepted';
+        await existingReverseRequest.save();
+      }
+
+      return res.json({ success: true, message: 'Request accepted and updated on both sides' });
+    }
+
+    return res.status(400).json({ error: 'Invalid status value' });
   } catch (error) {
     console.error('Error responding to request:', error);
     res.status(500).json({ error: 'Failed to process the request' });

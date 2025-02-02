@@ -35,7 +35,7 @@ exports.fetchAllUsers = async (req, res) => {
 
 exports.fetchSingleUser = async (req, res) => {
   try {
-    console.log(req.params.username)
+   
     const user = await User.findOne({
       where: { username: req.params.username },
       attributes: { exclude: ['password'] },  // Exclude sensitive data like password
@@ -53,6 +53,28 @@ exports.fetchSingleUser = async (req, res) => {
           required: false, // Optional: Users without received requests will also be returned
         },
       ],
+    });
+    
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ user, message: 'Fetched data successfully' });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+exports.fetchSingleUserById = async (req, res) => {
+  try {
+   
+    const user = await User.findOne({
+      where: { id: req.params.id },
+      attributes: { exclude: ['password'] },  // Exclude sensitive data like password
+      
     });
     
 

@@ -39,7 +39,7 @@ const verifyTokens = (req, res) => {
     res.status(500).json({ loggedIn: false, message: 'Server error' });
   }
 };
-
+  
 const renewToken = (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
