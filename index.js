@@ -28,8 +28,8 @@ app.use(cors({
 // SOCKET.IO IMPLEMENTATION
 const io = new Server(server, {
   cors: {
-    origin: "*",  // Make sure this is correct
-    // origin: process.env.FRONTEND_BASE_URL,  // Make sure this is correct
+    
+    origin: process.env.FRONTEND_BASE_URL,  // Make sure this is correct
     methods: ['GET', 'POST'],
     credentials: true,  // Allow credentials (cookies)
   },
