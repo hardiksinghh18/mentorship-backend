@@ -20,8 +20,7 @@ const server = http.createServer(app);
 app.use(cookieParser());
 app.use(express.json());
 app.use(cors({
-  origin: '*',  // Make sure FRONTEND_BASE_URL is set in your .env
-  // origin: process.env.FRONTEND_BASE_URL,  // Make sure FRONTEND_BASE_URL is set in your .env
+  origin: process.env.FRONTEND_BASE_URL,  // Make sure FRONTEND_BASE_URL is set in your .env
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,  // Allow cookies to be sent and received
 }));
@@ -29,7 +28,8 @@ app.use(cors({
 // SOCKET.IO IMPLEMENTATION
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_BASE_URL,  // Make sure this is correct
+    origin: "*",  // Make sure this is correct
+    // origin: process.env.FRONTEND_BASE_URL,  // Make sure this is correct
     methods: ['GET', 'POST'],
     credentials: true,  // Allow credentials (cookies)
   },
