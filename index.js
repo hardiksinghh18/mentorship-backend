@@ -53,8 +53,10 @@ app.use('/api/chat', chatRoutes);
 const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_BASE_URL,
+    methods: ['GET', 'POST'],
     credentials: true,
   },
+  transports: ['websocket', 'polling'], // Allow WebSockets
 });
 
 io.on('connection', (socket) => {
