@@ -33,7 +33,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,  // Allow credentials (cookies)
   },
-  transports: ['websocket', 'polling'], // Allow both WebSocket and Polling
+  transports: ['websocket'], // Allow both WebSocket and Polling
 });
 
 io.on('connection', (socket) => {
