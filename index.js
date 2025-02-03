@@ -20,7 +20,7 @@ const server = http.createServer(app);
 app.use(cookieParser());
 app.use(express.json());
 app.use(cors({
-  origin: process.env.FRONTEND_BASE_URL,  // Make sure FRONTEND_BASE_URL is set in your .env
+  origin: process.env.FRONTEND_BASE_URL ||  'https://mentorship-matching-mu.vercel.app',  // Make sure FRONTEND_BASE_URL is set in your .env
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,  // Allow cookies to be sent and received
 }));
@@ -38,9 +38,9 @@ const io = new Server(server, {
 
 io.on('connection', (socket) => {
   try {
-    console.log('inside io.on...')
+  
     console.log('A user connected:', socket.id);
- console.log('222')
+ 
   // Handle incoming messages
   socket.on('sendMessage', (data) => {
     console.log('Received message:', data);
