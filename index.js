@@ -37,8 +37,10 @@ const io = new Server(server, {
 });
 
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
-
+  try {
+    console.log('inside io.on...')
+    console.log('A user connected:', socket.id);
+ console.log('222')
   // Handle incoming messages
   socket.on('sendMessage', (data) => {
     console.log('Received message:', data);
@@ -53,6 +55,9 @@ io.on('connection', (socket) => {
   socket.on('connect_error', (err) => {
     console.error('Socket connection error:', err);
   });
+  } catch (error) {
+    console.log("Websocket connection failed due to backend issue",error)
+  }
 });
 
 // Routes
