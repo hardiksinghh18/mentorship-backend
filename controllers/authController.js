@@ -21,9 +21,9 @@ const refreshCookieOptions = {
   sameSite: isProduction ? 'None' : 'Lax',
 };
 
- 
 
- exports.register = async (req, res) => {
+
+exports.register = async (req, res) => {
   try {
     const { email, username, password } = req.body;
 
@@ -58,11 +58,11 @@ const refreshCookieOptions = {
 
     // Send success response with cookies
 
-     res
-     .status(200)
+    res
+      .status(200)
       .cookie('accessToken', accessToken, accessCookieOptions)
       .cookie('refreshToken', refreshToken, refreshCookieOptions)
-      .json({  loggedIn: true, user: newUser,message: 'Regisration successful'});
+      .json({ loggedIn: true, user: newUser, message: 'Regisration successful' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Something went wrong. Please try again later.' });
@@ -89,10 +89,10 @@ exports.login = async (req, res) => {
 
     // Send tokens in cookies
     res
-    .status(200)
+      .status(200)
       .cookie('accessToken', accessToken, accessCookieOptions)
       .cookie('refreshToken', refreshToken, refreshCookieOptions)
-      .json({  loggedIn: true, user: user,message: 'Login successful'});
+      .json({ loggedIn: true, user: user, message: 'Login successful' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });

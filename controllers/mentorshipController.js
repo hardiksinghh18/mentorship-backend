@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const MentorshipRequest = require('../models/MentorshipRequest');
 const User = require('../models/User');
 
@@ -180,17 +181,21 @@ exports.removeConnection = async (req, res) => {
       return res.status(400).json({ error: 'Sender ID and Receiver ID are required' });
     }
 
-    // Find the accepted connection to remove
-    const connection = await MentorshipRequest.findOne({
-      where: { senderId, receiverId, status: 'accepted' },
+    // Remove the connection in both directions
+    const deletedCount = await MentorshipRequest.destroy({
+      where: {
+        [Op.or]: [
+          { senderId: senderId, receiverId: receiverId },
+          { senderId: receiverId, receiverId: senderId }
+        ],
+        status: 'accepted'
+      }
     });
 
-    if (!connection) {
-      return res.status(404).json({ error: 'Connection not found or not accepted' });
+    if (deletedCount === 0) {
+      return res.status(404).json({ error: 'Connection not found or already terminated' });
     }
 
-    // Remove the connection
-    await connection.destroy();
     return res.json({ success: true, message: 'Connection removed successfully' });
   } catch (error) {
     console.error('Error removing connection:', error);
