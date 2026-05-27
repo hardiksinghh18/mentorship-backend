@@ -9,7 +9,7 @@ The backend of the Mentorship Platform is a RESTful API that facilitates user au
 - **User Authentication**: Secure registration, login, and logout functionalities using JWT.
 - **Profile Management**: APIs to create, edit, and delete user profiles.
 - **Mentorship Connections**: Features to send, accept, or decline mentorship requests.
-- **Role-Based Discovery**: Filters for mentors or mentees based on skills, interests, and more.
+- **Role-Based Discovery**: Filters for mentors or mentees based on skills, experience, role and more.
 
 ---
 
@@ -85,7 +85,7 @@ The backend of the Mentorship Platform is a RESTful API that facilitates user au
 - `PUT /api/requests/:id` - Update request status (accept/decline)
 
 ### User Discovery
-- `GET /api/users` - List users with filters for roles, skills, and interests
+- `GET /api/users` - List users with filters for roles and skills
 
 ---
 

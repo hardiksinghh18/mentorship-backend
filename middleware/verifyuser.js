@@ -31,8 +31,10 @@ const verifyTokens = (req, res) => {
       }
       
       const user = await User.findOne({ where: { email:decoded.email } });
+      const userResponse = user.toJSON();
+      delete userResponse.password;
      
-      return res.json({ loggedIn: true, user: user.dataValues, message: 'Access Token valid' });
+      return res.json({ loggedIn: true, user: userResponse, message: 'Access Token valid' });
     });
   } catch (error) {
     console.error('Error verifying user:', error);

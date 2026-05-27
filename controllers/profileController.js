@@ -11,7 +11,7 @@ exports.getProfile = async (req, res) => {
   }
 };
 
- 
+
 // Update user profile
 exports.updateProfile = async (req, res) => {
   try {
@@ -23,21 +23,40 @@ exports.updateProfile = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-  
+
+
+    // Calculate total years of experience
+    let totalYears = 0;
+    const expData = req.body.experience || user.experience;
+    const parsedExp = typeof expData === 'string' ? JSON.parse(expData) : expData;
+
+    if (parsedExp && Array.isArray(parsedExp)) {
+      parsedExp.forEach(exp => {
+        if (exp.startDate) {
+          const start = new Date(exp.startDate);
+          const end = exp.currentlyWorking ? new Date() : (exp.endDate ? new Date(exp.endDate) : new Date());
+          const diffInYears = (end - start) / (1000 * 60 * 60 * 24 * 365.25);
+          if (diffInYears > 0) totalYears += diffInYears;
+        }
+      });
+    }
 
     // Update the user with the new values
     const updatedData = {
-      fullName: req.body.fullName || user.fullName, // If req.body.name is empty, keep the existing value
+      fullName: req.body.fullName || user.fullName,
       role: req.body.role || user.role,
       skills: req.body.skills || user.skills,
-      interests: req.body.interests || user.interests,
       bio: req.body.bio || user.bio,
+      education: req.body.education || user.education,
+      experience: req.body.experience || user.experience,
+      socialLinks: req.body.socialLinks || user.socialLinks,
+      yearsOfExperience: Math.floor(totalYears)
     };
 
     // Update the user in the database
-   const updatedUser= await user.update(updatedData);
- 
-    res.json({loggedIn: true,user: updatedUser, message: 'Profile updated successfully', user: updatedData });
+    const updatedUser = await user.update(updatedData);
+
+    res.json({ loggedIn: true, user: updatedUser, message: 'Profile updated successfully' });
   } catch (error) {
     console.error('Error:', error.message);
     res.status(500).json({ error: error.message });
@@ -50,7 +69,7 @@ exports.deleteProfile = async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
-    
+
     await user.destroy();
     res.json({ message: 'Profile deleted successfully' });
   } catch (error) {
