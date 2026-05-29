@@ -8,7 +8,7 @@ const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const mentorshipRoutes = require('./routes/mentorshipRoutes');
 const chatRoutes = require('./routes/chatRoutes');
-const { fetchSingleUser, fetchAllUsers, fetchSingleUserById } = require('./controllers/dataController');
+const { fetchSingleUser, fetchAllUsers, fetchSingleUserById, fetchMatches } = require('./controllers/dataController');
 const verifyTokens = require('./middleware/verifyuser');
 const logout = require('./middleware/logout');
 
@@ -87,6 +87,7 @@ app.post('/auth/logout', logout);
 app.get('/users', fetchAllUsers);
 app.get('/users/:username', fetchSingleUser);
 app.get('/user/:id', fetchSingleUserById);
+app.get('/users/:id/matches', fetchMatches);
 
 // Register your route handlers
 app.use('/api/auth', authRoutes);

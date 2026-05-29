@@ -3,6 +3,7 @@
 const { Op } = require('sequelize');
 const User = require('../models/User');
 const MentorshipRequest = require('../models/MentorshipRequest');
+const embeddingService = require('../services/embeddingService');
 
 exports.fetchAllUsers = async (req, res) => {
   try {
@@ -122,8 +123,117 @@ exports.fetchAllUsers = async (req, res) => {
       ],
     });
 
+    // Compute dynamic AI similarity metadata for the current user against returned candidates
+    let usersWithAI = [];
+    if (currentUserId) {
+      try {
+        const currentUser = await User.findByPk(currentUserId);
+        if (currentUser) {
+          let currentUserEmbedding = null;
+          if (currentUser.profileEmbedding) {
+            try {
+              currentUserEmbedding = JSON.parse(currentUser.profileEmbedding);
+            } catch {
+              currentUserEmbedding = null;
+            }
+          }
+
+          for (const candidate of users) {
+            const userJson = candidate.toJSON ? candidate.toJSON() : candidate;
+
+            // Only calculate similarity if the current user has a valid profile embedding
+            if (currentUserEmbedding) {
+              let candidateEmbedding = null;
+              if (userJson.profileEmbedding) {
+                try {
+                  candidateEmbedding = JSON.parse(userJson.profileEmbedding);
+                } catch {
+                  candidateEmbedding = null;
+                }
+              }
+
+              const isPeer = currentUser.role === userJson.role;
+              const semanticSim = candidateEmbedding
+                ? cosineSimilarity(currentUserEmbedding, candidateEmbedding)
+                : 0.50; // Fallback
+
+              const expScore = calculateExperienceScore(
+                currentUser.yearsOfExperience || 0,
+                userJson.yearsOfExperience || 0,
+                isPeer
+              );
+
+              const skillScore = calculateSkillScore(
+                currentUser.skills,
+                userJson.skills,
+                isPeer
+              );
+
+              let compatibilityScore = 0;
+              let matchType = '';
+
+              if (isPeer) {
+                compatibilityScore = (0.50 * semanticSim + 0.35 * skillScore + 0.15 * expScore) * 100;
+                matchType = 'peer';
+              } else {
+                compatibilityScore = (0.50 * semanticSim + 0.30 * skillScore + 0.20 * expScore) * 100;
+                matchType = 'mentorship';
+              }
+
+              compatibilityScore = Math.max(15, Math.min(99, Math.round(compatibilityScore)));
+
+              // Formulate dynamic chips/insights
+              const insights = [];
+              if (isPeer) {
+                insights.push('Peer Match');
+                const expDiff = Math.abs((currentUser.yearsOfExperience || 0) - (userJson.yearsOfExperience || 0));
+                if (expDiff <= 1) insights.push('Similar Career Level');
+              } else {
+                insights.push(userJson.role === 'mentor' ? 'Expert Guide' : 'Aspiring Learner');
+                const expGap = (userJson.yearsOfExperience || 0) - (currentUser.yearsOfExperience || 0);
+                if (expGap >= 3 && expGap <= 6) insights.push('Ideal Experience Match');
+              }
+
+              const cleanSkills = (skills) => {
+                if (!skills) return [];
+                try {
+                  const parsed = typeof skills === 'string' ? JSON.parse(skills) : skills;
+                  if (Array.isArray(parsed)) return parsed;
+                  return Object.values(parsed);
+                } catch {
+                  return String(skills).split(',');
+                }
+              };
+
+              const userSkills = cleanSkills(currentUser.skills).map(s => s.trim().toLowerCase());
+              const candidateSkills = cleanSkills(userJson.skills).map(s => s.trim().toLowerCase());
+              const overlap = userSkills.filter(s => candidateSkills.includes(s));
+
+              if (overlap.length > 0) {
+                insights.push(`${overlap.length} Shared Skill${overlap.length > 1 ? 's' : ''}`);
+              }
+
+              userJson.matchDetails = {
+                compatibilityScore,
+                matchType,
+                insights
+              };
+            }
+            usersWithAI.push(userJson);
+          }
+        } else {
+          usersWithAI = users;
+        }
+      } catch (err) {
+        console.error("Error computing AI metrics for explore feed:", err);
+        usersWithAI = users;
+      }
+    } else {
+      usersWithAI = users;
+    }
+
     res.status(200).json({
-      users,
+      users: usersWithAI,
       totalCount: count,
       currentPage: page,
       totalPages: Math.ceil(count / limit),
@@ -190,6 +300,277 @@ exports.fetchSingleUserById = async (req, res) => {
     res.status(200).json({ user, message: 'Fetched data successfully' });
   } catch (error) {
     console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+// Cosine Similarity Helper
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0.5;
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0.5;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+// Experience Score Helper
+function calculateExperienceScore(currentUserExp, candidateExp, isPeer) {
+  if (isPeer) {
+    const gap = Math.abs(currentUserExp - candidateExp);
+    if (gap <= 1) return 1.0; // Perfect parallel pace
+    if (gap === 2) return 0.8;
+    if (gap === 3) return 0.6;
+    return 0.3; // High disparity, less suitable for co-learning
+  } else {
+    // Mentorship mode: candidate is opposite role
+    const gap = candidateExp - currentUserExp; // Positive means candidate is more experienced
+    if (gap <= 0) return 0.2; // Candidate has less or equal experience
+    if (gap >= 3 && gap <= 6) return 1.0; // Perfect sweet-spot
+    if (gap < 3) return 0.7; // Moderate progression
+    return 0.85; // Highly experienced, good but potentially distant
+  }
+}
+
+// Skill Overlap Score Helper
+function calculateSkillScore(userSkills, candidateSkills, isPeer) {
+  const cleanSkills = (skills) => {
+    if (!skills) return [];
+    try {
+      const parsed = typeof skills === 'string' ? JSON.parse(skills) : skills;
+      if (Array.isArray(parsed)) return parsed.map(s => s.trim().toLowerCase());
+      if (typeof parsed === 'object') return Object.values(parsed).map(s => String(s).trim().toLowerCase());
+      return String(parsed).split(',').map(s => s.trim().toLowerCase());
+    } catch {
+      return String(skills).split(',').map(s => s.trim().toLowerCase());
+    }
+  };
+
+  const a = cleanSkills(userSkills);
+  const b = cleanSkills(candidateSkills);
+  if (a.length === 0 || b.length === 0) return 0.1;
+
+  const intersection = a.filter(x => b.includes(x));
+
+  if (isPeer) {
+    // Same role: high overlap is good (shared study interest)
+    const union = [...new Set([...a, ...b])];
+    return intersection.length / union.length; // Jaccard similarity
+  } else {
+    // Different role: we want the mentor to have skills that the mentee does not have, or overlap
+    return intersection.length / Math.max(1, a.length);
+  }
+}
+
+// Dynamic Hybrid Matching Engine Controller
+exports.fetchMatches = async (req, res) => {
+  try {
+    const currentUserId = req.params.id;
+
+    // 1. Fetch current user profile
+    const currentUser = await User.findByPk(currentUserId);
+    if (!currentUser) {
+      return res.status(404).json({ error: 'Current user not found' });
+    }
+
+    // 2. Self-healing embedding generation (Lazy-loading for existing seeded profiles)
+    let currentUserEmbedding;
+    if (!currentUser.profileEmbedding) {
+      console.log(`Generating initial profile embedding for user ${currentUser.username} dynamically...`);
+      const embeddingValues = await embeddingService.generateProfileEmbedding(currentUser);
+      if (embeddingValues) {
+        currentUserEmbedding = embeddingValues;
+        currentUser.profileEmbedding = JSON.stringify(embeddingValues);
+        await currentUser.save();
+      }
+    } else {
+      currentUserEmbedding = JSON.parse(currentUser.profileEmbedding);
+    }
+
+    if (!currentUserEmbedding) {
+      return res.status(500).json({ error: 'Could not generate vector embedding for the current user.' });
+    }
+
+    // 3. Fetch list of connections to exclude (accepted or pending)
+    const activeConnectionIds = await MentorshipRequest.findAll({
+      where: {
+        [Op.or]: [
+          { senderId: currentUserId },
+          { receiverId: currentUserId }
+        ],
+        status: { [Op.in]: ['accepted', 'pending'] }
+      },
+      attributes: ['senderId', 'receiverId']
+    }).then(requests => {
+      const ids = new Set();
+      requests.forEach(r => {
+        if (r.senderId !== currentUserId) ids.add(r.senderId);
+        if (r.receiverId !== currentUserId) ids.add(r.receiverId);
+      });
+      return Array.from(ids);
+    });
+
+    // 4. Fetch all other users with complete profiles
+    const whereClause = {
+      id: { [Op.ne]: currentUserId },
+      role: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+      bio: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] }
+    };
+
+    if (activeConnectionIds.length > 0) {
+      whereClause.id = {
+        [Op.and]: [
+          { [Op.ne]: currentUserId },
+          { [Op.notIn]: activeConnectionIds }
+        ]
+      };
+    }
+
+    const otherUsers = await User.findAll({
+      where: whereClause,
+      attributes: { exclude: ['password'] }
+    });
+
+    // 5. Compute Hybrid Compatibility Scores
+    const matchedUsers = [];
+
+    for (const candidate of otherUsers) {
+      // Lazy-load candidate embedding if missing (self-healing seeded users)
+      let candidateEmbedding;
+      if (!candidate.profileEmbedding) {
+        try {
+          const embValues = await embeddingService.generateProfileEmbedding(candidate);
+          if (embValues) {
+            candidateEmbedding = embValues;
+            candidate.profileEmbedding = JSON.stringify(embValues);
+            await candidate.save();
+          }
+        } catch (e) {
+          console.error(`Lazy-load embedding failed for user ${candidate.username}:`, e.message);
+        }
+      } else {
+        try {
+          candidateEmbedding = JSON.parse(candidate.profileEmbedding);
+        } catch {
+          candidateEmbedding = null;
+        }
+      }
+
+      // If both embeddings exist, compute similarity
+      const isPeer = currentUser.role === candidate.role;
+      const semanticSim = candidateEmbedding
+        ? cosineSimilarity(currentUserEmbedding, candidateEmbedding)
+        : 0.50; // Fallback
+
+      const expScore = calculateExperienceScore(
+        currentUser.yearsOfExperience || 0,
+        candidate.yearsOfExperience || 0,
+        isPeer
+      );
+
+      const skillScore = calculateSkillScore(
+        currentUser.skills,
+        candidate.skills,
+        isPeer
+      );
+
+      // Fusion Scoring Formula
+      let compatibilityScore = 0;
+      let matchType = '';
+
+      if (isPeer) {
+        // Peer Mode (Horizontal)
+        compatibilityScore = (0.50 * semanticSim + 0.35 * skillScore + 0.15 * expScore) * 100;
+        matchType = 'peer';
+      } else {
+        // Mentorship Mode (Vertical)
+        compatibilityScore = (0.50 * semanticSim + 0.30 * skillScore + 0.20 * expScore) * 100;
+        matchType = 'mentorship';
+      }
+
+      // Bound compatibilityScore between 15% and 99% for visual consistency
+      compatibilityScore = Math.max(15, Math.min(99, Math.round(compatibilityScore)));
+
+      // Generate key descriptive visual badges/insights
+      const insights = [];
+      if (isPeer) {
+        insights.push('Peer Match');
+        const expDiff = Math.abs((currentUser.yearsOfExperience || 0) - (candidate.yearsOfExperience || 0));
+        if (expDiff <= 1) insights.push('Similar Career Level');
+      } else {
+        insights.push(candidate.role === 'mentor' ? 'Expert Guide' : 'Aspiring Learner');
+        const expGap = (candidate.yearsOfExperience || 0) - (currentUser.yearsOfExperience || 0);
+        if (expGap >= 3 && expGap <= 6) insights.push('Ideal Experience Match');
+      }
+
+      const cleanSkills = (skills) => {
+        if (!skills) return [];
+        try {
+          const parsed = typeof skills === 'string' ? JSON.parse(skills) : skills;
+          if (Array.isArray(parsed)) return parsed;
+          return Object.values(parsed);
+        } catch {
+          return String(skills).split(',');
+        }
+      };
+
+      const userSkills = cleanSkills(currentUser.skills).map(s => s.trim().toLowerCase());
+      const candidateSkills = cleanSkills(candidate.skills).map(s => s.trim().toLowerCase());
+      const overlap = userSkills.filter(s => candidateSkills.includes(s));
+
+      if (overlap.length > 0) {
+        insights.push(`${overlap.length} Shared Skill${overlap.length > 1 ? 's' : ''}`);
+      }
+
+      // Append matched profile payload
+      matchedUsers.push({
+        user: {
+          id: candidate.id,
+          username: candidate.username,
+          fullName: candidate.fullName,
+          email: candidate.email,
+          role: candidate.role,
+          bio: candidate.bio,
+          skills: candidate.skills,
+          experience: candidate.experience,
+          education: candidate.education,
+          socialLinks: candidate.socialLinks,
+          yearsOfExperience: candidate.yearsOfExperience
+        },
+        compatibilityScore,
+        matchType,
+        insights
+      });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // 6. Sort by highest compatibility score descending
+    matchedUsers.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
+
+    // Limit to top 20 matches total as requested: "show 20 results and on two pages"
+    const topMatches = matchedUsers.slice(0, 20);
+    const paginatedMatches = topMatches.slice(offset, offset + limit);
+
+    res.status(200).json({
+      matches: paginatedMatches,
+      totalCount: topMatches.length,
+      currentPage: page,
+      totalPages: Math.ceil(topMatches.length / limit),
+      hasMore: offset + limit < topMatches.length,
+      message: 'Successfully computed AI matches locally'
+    });
+
+  } catch (error) {
+    console.error('Error in Hybrid Matching Engine:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };

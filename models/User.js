@@ -15,6 +15,7 @@ const User = sequelize.define('User', {
   experience: { type: DataTypes.JSON },
   socialLinks: { type: DataTypes.JSON },
   yearsOfExperience: { type: DataTypes.INTEGER, defaultValue: 0 },
+  profileEmbedding: { type: DataTypes.TEXT('long'), allowNull: true },
 });
 
 
