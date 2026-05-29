@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const embeddingService = require('../services/embeddingService');
 
 // Get user profile by ID
 exports.getProfile = async (req, res) => {
@@ -52,6 +53,25 @@ exports.updateProfile = async (req, res) => {
       socialLinks: req.body.socialLinks || user.socialLinks,
       yearsOfExperience: Math.floor(totalYears)
     };
+
+    // Recalculate and cache the profile embedding
+    let profileEmbedding = user.profileEmbedding;
+    try {
+      const embeddingValues = await embeddingService.generateProfileEmbedding({
+        role: updatedData.role,
+        bio: updatedData.bio,
+        skills: updatedData.skills,
+        experience: updatedData.experience,
+        yearsOfExperience: updatedData.yearsOfExperience
+      });
+      if (embeddingValues) {
+        profileEmbedding = JSON.stringify(embeddingValues);
+      }
+    } catch (embError) {
+      console.error("Failed to generate profile embedding on update:", embError.message);
+    }
+
+    updatedData.profileEmbedding = profileEmbedding;
 
     // Update the user in the database
     const updatedUser = await user.update(updatedData);
