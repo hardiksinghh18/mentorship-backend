@@ -24,9 +24,7 @@ const refreshCookieOptions = {
   sameSite: isProduction ? 'None' : 'Lax',
 };
 
- 
-
- exports.register = async (req, res) => {
+exports.register = async (req, res, next) => {
   try {
     const { email, username, password } = req.body;
 
@@ -35,11 +33,15 @@ const refreshCookieOptions = {
     const existingUserByUsername = await User.findOne({ where: { username } });
 
     if (existingUserByEmail) {
-      return res.status(400).json({ message: 'Email is already taken' });
+      const error = new Error('Email is already taken');
+      error.statusCode = 400;
+      throw error;
     }
 
     if (existingUserByUsername) {
-      return res.status(400).json({ message: 'Username is already taken' });
+      const error = new Error('Username is already taken');
+      error.statusCode = 400;
+      throw error;
     }
 
     // Hash the password before saving
@@ -56,28 +58,22 @@ const refreshCookieOptions = {
     const accessToken = jwt.sign({ userId: newUser.id, email: newUser.email, username: newUser.username }, process.env.ACCESS_TOKEN_KEY, { expiresIn: '1d' });
     const refreshToken = jwt.sign({ userId: newUser.id, email: newUser.email }, process.env.REFRESH_TOKEN_KEY, { expiresIn: '30d' });
 
-    console.log('Access Token:', accessToken);
-    console.log('Refresh Token:', refreshToken);
-
     // Send success response with cookies
     const userResponse = newUser.toJSON();
     delete userResponse.password;
 
     res
-     .status(200)
+      .status(200)
       .cookie('accessToken', accessToken, accessCookieOptions)
       .cookie('refreshToken', refreshToken, refreshCookieOptions)
-      .json({  loggedIn: true, user: userResponse,message: 'Regisration successful'});
+      .json({ loggedIn: true, user: userResponse, message: 'Registration successful' });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Something went wrong. Please try again later.' });
+    next(error);
   }
 };
 
-
-
 // User Login
-exports.login = async (req, res) => {
+exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
@@ -86,7 +82,9 @@ exports.login = async (req, res) => {
 
     // Safety check: ensure user exists and has a password (not a Google-only user)
     if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      const error = new Error('Invalid credentials');
+      error.statusCode = 401;
+      throw error;
     }
 
     // Create access and refresh tokens
@@ -98,17 +96,17 @@ exports.login = async (req, res) => {
     delete userResponse.password;
 
     res
-    .status(200)
+      .status(200)
       .cookie('accessToken', accessToken, accessCookieOptions)
       .cookie('refreshToken', refreshToken, refreshCookieOptions)
-      .json({  loggedIn: true, user: userResponse,message: 'Login successful'});
+      .json({ loggedIn: true, user: userResponse, message: 'Login successful' });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
-exports.googleLogin = async (req, res) => {
+// Google Single Sign-On / Login
+exports.googleLogin = async (req, res, next) => {
   try {
     const { token } = req.body;
 
@@ -118,13 +116,12 @@ exports.googleLogin = async (req, res) => {
     });
 
     const payload = ticket.getPayload();
-    const { sub: googleId, email, name, picture } = payload;
+    const { sub: googleId, email, name } = payload;
 
     let user = await User.findOne({ where: { email } });
 
     if (!user) {
       // Create a new user if one doesn't exist
-      // We generate a random username if it's not provided or taken
       const baseUsername = name ? name.toLowerCase().replace(/\s/g, '') : email.split('@')[0];
       let username = baseUsername;
       let counter = 1;
@@ -139,7 +136,6 @@ exports.googleLogin = async (req, res) => {
         username,
         fullName: name,
         googleId,
-        // Password remains null
       });
     } else if (!user.googleId) {
       // Update existing user with googleId if they login with Google for the first time
@@ -161,8 +157,6 @@ exports.googleLogin = async (req, res) => {
       .json({ loggedIn: true, user: userResponse, message: 'Google login successful' });
 
   } catch (error) {
-    console.error('Google login error:', error);
-    res.status(500).json({ error: 'Google authentication failed' });
+    next(error);
   }
 };
-

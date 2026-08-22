@@ -31,6 +31,9 @@ const verifyTokens = (req, res) => {
       }
       
       const user = await User.findOne({ where: { email:decoded.email } });
+      if (!user) {
+        return res.status(401).json({ loggedIn: false, message: 'User not found' });
+      }
       const userResponse = user.toJSON();
       delete userResponse.password;
      

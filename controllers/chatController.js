@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const Message = require('../models/Message');
 
-exports.sendMessage = async (req, res) => {
+exports.sendMessage = async (req, res, next) => {
   try {
     const { senderId, receiverId, message } = req.body;
     
@@ -9,11 +9,11 @@ exports.sendMessage = async (req, res) => {
     
     res.status(201).json(newMessage);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to send message' });
+    next(error);
   }
 };
 
-exports.getMessages = async (req, res) => {
+exports.getMessages = async (req, res, next) => {
   try {
     const { senderId, receiverId } = req.params;
 
@@ -29,7 +29,6 @@ exports.getMessages = async (req, res) => {
 
     res.status(200).json(messages);
   } catch (error) {
-    console.error('Error retrieving messages:', error);
-    res.status(500).json({ error: 'Failed to retrieve messages' });
+    next(error);
   }
 };

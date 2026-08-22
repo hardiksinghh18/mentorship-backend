@@ -2,29 +2,31 @@ const User = require('../models/User');
 const embeddingService = require('../services/embeddingService');
 
 // Get user profile by ID
-exports.getProfile = async (req, res) => {
+exports.getProfile = async (req, res, next) => {
   try {
     const user = await User.findByPk(req.params.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) {
+      const error = new Error('User not found');
+      error.statusCode = 404;
+      throw error;
+    }
     res.json(user);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
 
 // Update user profile
-exports.updateProfile = async (req, res) => {
+exports.updateProfile = async (req, res, next) => {
   try {
-
-
     // Find user by email (assuming req.params.id is the email)
     const user = await User.findOne({ where: { email: req.params.id } });
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      const error = new Error('User not found');
+      error.statusCode = 404;
+      throw error;
     }
-
-
 
     // Calculate total years of experience
     let totalYears = 0;
@@ -78,23 +80,24 @@ exports.updateProfile = async (req, res) => {
 
     res.json({ loggedIn: true, user: updatedUser, message: 'Profile updated successfully' });
   } catch (error) {
-    console.error('Error:', error.message);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
 
 // Delete user profile
-exports.deleteProfile = async (req, res) => {
+exports.deleteProfile = async (req, res, next) => {
   try {
     const user = await User.findByPk(req.params.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) {
+      const error = new Error('User not found');
+      error.statusCode = 404;
+      throw error;
+    }
 
     await user.destroy();
     res.json({ message: 'Profile deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 };
-
-

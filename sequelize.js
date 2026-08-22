@@ -1,4 +1,7 @@
 const sequelize = require('./config/db');
+require('./models/User');
+require('./models/MentorshipRequest');
+require('./models/Message');
 
 sequelize.sync({ force: false }) // Set force: true to drop existing tables and recreate
   .then(() => {

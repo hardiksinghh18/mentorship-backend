@@ -5,7 +5,7 @@ const User = require('../models/User');
 const MentorshipRequest = require('../models/MentorshipRequest');
 const embeddingService = require('../services/embeddingService');
 
-exports.fetchAllUsers = async (req, res) => {
+exports.fetchAllUsers = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -16,12 +16,12 @@ exports.fetchAllUsers = async (req, res) => {
 
     const sequelize = User.sequelize;
     const where = {
-      role: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+      role: { [Op.ne]: null },
       bio: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
       [Op.and]: [
-        sequelize.where(sequelize.fn('JSON_LENGTH', sequelize.col('skills')), { [Op.gt]: 0 }),
-        sequelize.where(sequelize.fn('JSON_LENGTH', sequelize.col('education')), { [Op.gt]: 0 }),
-        sequelize.where(sequelize.fn('JSON_LENGTH', sequelize.col('experience')), { [Op.gt]: 0 })
+        sequelize.where(sequelize.fn('json_array_length', sequelize.col('skills')), { [Op.gt]: 0 }),
+        sequelize.where(sequelize.fn('json_array_length', sequelize.col('education')), { [Op.gt]: 0 }),
+        sequelize.where(sequelize.fn('json_array_length', sequelize.col('experience')), { [Op.gt]: 0 })
       ]
     };
 
@@ -52,7 +52,7 @@ exports.fetchAllUsers = async (req, res) => {
         where[Op.and].push({
           [Op.or]: skillsArray.map(skill => (
             sequelize.where(
-              sequelize.fn('LOWER', sequelize.cast(sequelize.col('skills'), 'CHAR')),
+              sequelize.fn('LOWER', sequelize.cast(sequelize.col('skills'), 'TEXT')),
               { [Op.like]: `%${skill}%` }
             )
           ))
@@ -93,7 +93,7 @@ exports.fetchAllUsers = async (req, res) => {
         where[Op.and].push({
           id: {
             [Op.and]: [
-              { [Op.notIn]: sequelize.literal(`(SELECT IF(senderId = '${currentUserId}', receiverId, senderId) FROM MentorshipRequests WHERE (senderId = '${currentUserId}' OR receiverId = '${currentUserId}') AND status IN ('accepted', 'pending'))`) }
+              { [Op.notIn]: sequelize.literal(`(SELECT CASE WHEN senderId = '${currentUserId}' THEN receiverId ELSE senderId END FROM MentorshipRequests WHERE (senderId = '${currentUserId}' OR receiverId = '${currentUserId}') AND status IN ('accepted', 'pending'))`) }
             ]
           }
         });
@@ -102,9 +102,28 @@ exports.fetchAllUsers = async (req, res) => {
 
     console.log("Generated WHERE clause:", JSON.stringify(where, null, 2));
 
-    const { count, rows: users } = await User.findAndCountAll({
+    // Fetch current user and embedding first to use in database-level vector operations
+    let currentUser = null;
+    let currentUserEmbedding = null;
+    if (currentUserId) {
+      try {
+        currentUser = await User.findByPk(currentUserId);
+        if (currentUser && currentUser.profileEmbedding) {
+          currentUserEmbedding = typeof currentUser.profileEmbedding === 'string'
+            ? JSON.parse(currentUser.profileEmbedding)
+            : currentUser.profileEmbedding;
+        }
+      } catch (err) {
+        console.error("Failed to load current user embedding:", err.message);
+      }
+    }
+
+    const queryOptions = {
       where,
-      attributes: { exclude: ['password'] },
+      attributes: {
+        exclude: ['password'],
+        include: []
+      },
       limit,
       offset,
       include: [
@@ -121,47 +140,37 @@ exports.fetchAllUsers = async (req, res) => {
           required: false, // Optional: If you want users with no connections to appear as well
         },
       ],
-    });
+    };
+
+    if (currentUserEmbedding && Array.isArray(currentUserEmbedding)) {
+      queryOptions.attributes.include.push([
+        sequelize.literal(`1 - ("profileEmbedding" <=> '[${currentUserEmbedding.join(',')}]'::vector)`),
+        'semanticSim'
+      ]);
+    }
+
+    const { count, rows: users } = await User.findAndCountAll(queryOptions);
 
     // Compute dynamic AI similarity metadata for the current user against returned candidates
     let usersWithAI = [];
-    if (currentUserId) {
+    if (currentUserId && currentUser) {
       try {
-        const currentUser = await User.findByPk(currentUserId);
-        if (currentUser) {
-          let currentUserEmbedding = null;
-          if (currentUser.profileEmbedding) {
-            try {
-              currentUserEmbedding = JSON.parse(currentUser.profileEmbedding);
-            } catch {
-              currentUserEmbedding = null;
-            }
-          }
+        for (const candidate of users) {
+          const userJson = candidate.toJSON ? candidate.toJSON() : candidate;
 
-          for (const candidate of users) {
-            const userJson = candidate.toJSON ? candidate.toJSON() : candidate;
+          // Only calculate similarity if the current user has a valid profile embedding
+          if (currentUserEmbedding) {
+            const isPeer = currentUser.role === userJson.role;
+            const dbSemanticSim = candidate.getDataValue ? candidate.getDataValue('semanticSim') : null;
+            const semanticSim = dbSemanticSim !== null && !isNaN(dbSemanticSim)
+              ? parseFloat(dbSemanticSim)
+              : 0.50; // Fallback
 
-            // Only calculate similarity if the current user has a valid profile embedding
-            if (currentUserEmbedding) {
-              let candidateEmbedding = null;
-              if (userJson.profileEmbedding) {
-                try {
-                  candidateEmbedding = JSON.parse(userJson.profileEmbedding);
-                } catch {
-                  candidateEmbedding = null;
-                }
-              }
-
-              const isPeer = currentUser.role === userJson.role;
-              const semanticSim = candidateEmbedding
-                ? cosineSimilarity(currentUserEmbedding, candidateEmbedding)
-                : 0.50; // Fallback
-
-              const expScore = calculateExperienceScore(
-                currentUser.yearsOfExperience || 0,
-                userJson.yearsOfExperience || 0,
-                isPeer
-              );
+            const expScore = calculateExperienceScore(
+              currentUser.yearsOfExperience || 0,
+              userJson.yearsOfExperience || 0,
+              isPeer
+            );
 
               const skillScore = calculateSkillScore(
                 currentUser.skills,
@@ -221,13 +230,10 @@ exports.fetchAllUsers = async (req, res) => {
             }
             usersWithAI.push(userJson);
           }
-        } else {
+        } catch (err) {
+          console.error("Error computing AI metrics for explore feed:", err);
           usersWithAI = users;
         }
-      } catch (err) {
-        console.error("Error computing AI metrics for explore feed:", err);
-        usersWithAI = users;
-      }
     } else {
       usersWithAI = users;
     }
@@ -241,14 +247,13 @@ exports.fetchAllUsers = async (req, res) => {
       message: 'Fetched data for profiles'
     });
   } catch (error) {
-    console.error("Error fetching users:", error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 };
 
 
 
-exports.fetchSingleUser = async (req, res) => {
+exports.fetchSingleUser = async (req, res, next) => {
   try {
 
     const user = await User.findOne({
@@ -277,13 +282,12 @@ exports.fetchSingleUser = async (req, res) => {
 
     res.status(200).json({ user, message: 'Fetched data successfully' });
   } catch (error) {
-    console.error('Error fetching user:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 };
 
 
-exports.fetchSingleUserById = async (req, res) => {
+exports.fetchSingleUserById = async (req, res, next) => {
   try {
 
     const user = await User.findOne({
@@ -299,8 +303,7 @@ exports.fetchSingleUserById = async (req, res) => {
 
     res.status(200).json({ user, message: 'Fetched data successfully' });
   } catch (error) {
-    console.error('Error fetching user:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 };
 
@@ -369,9 +372,10 @@ function calculateSkillScore(userSkills, candidateSkills, isPeer) {
 }
 
 // Dynamic Hybrid Matching Engine Controller
-exports.fetchMatches = async (req, res) => {
+exports.fetchMatches = async (req, res, next) => {
   try {
     const currentUserId = req.params.id;
+    const sequelize = User.sequelize;
 
     // 1. Fetch current user profile
     const currentUser = await User.findByPk(currentUserId);
@@ -419,7 +423,7 @@ exports.fetchMatches = async (req, res) => {
     // 4. Fetch all other users with complete profiles
     const whereClause = {
       id: { [Op.ne]: currentUserId },
-      role: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+      role: { [Op.ne]: null },
       bio: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] }
     };
 
@@ -434,38 +438,40 @@ exports.fetchMatches = async (req, res) => {
 
     const otherUsers = await User.findAll({
       where: whereClause,
-      attributes: { exclude: ['password'] }
+      attributes: {
+        exclude: ['password'],
+        include: [
+          [
+            sequelize.literal(`1 - ("profileEmbedding" <=> '[${currentUserEmbedding.join(',')}]'::vector)`),
+            'semanticSim'
+          ]
+        ]
+      },
+      order: sequelize.literal(`"profileEmbedding" <=> '[${currentUserEmbedding.join(',')}]'::vector ASC`)
     });
 
     // 5. Compute Hybrid Compatibility Scores
     const matchedUsers = [];
 
     for (const candidate of otherUsers) {
-      // Lazy-load candidate embedding if missing (self-healing seeded users)
-      let candidateEmbedding;
+      // If candidate embedding is missing, regenerate it (self-healing seeded users)
       if (!candidate.profileEmbedding) {
         try {
           const embValues = await embeddingService.generateProfileEmbedding(candidate);
           if (embValues) {
-            candidateEmbedding = embValues;
-            candidate.profileEmbedding = JSON.stringify(embValues);
+            candidate.profileEmbedding = JSON.stringify(embValues); // pgvector needs bracket formatted string
             await candidate.save();
           }
         } catch (e) {
           console.error(`Lazy-load embedding failed for user ${candidate.username}:`, e.message);
         }
-      } else {
-        try {
-          candidateEmbedding = JSON.parse(candidate.profileEmbedding);
-        } catch {
-          candidateEmbedding = null;
-        }
       }
 
-      // If both embeddings exist, compute similarity
+      // If both embeddings exist, compute similarity using pgvector calculation
       const isPeer = currentUser.role === candidate.role;
-      const semanticSim = candidateEmbedding
-        ? cosineSimilarity(currentUserEmbedding, candidateEmbedding)
+      const dbSemanticSim = candidate.getDataValue('semanticSim');
+      const semanticSim = dbSemanticSim !== null && !isNaN(dbSemanticSim)
+        ? parseFloat(dbSemanticSim)
         : 0.50; // Fallback
 
       const expScore = calculateExperienceScore(
@@ -570,7 +576,6 @@ exports.fetchMatches = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error in Hybrid Matching Engine:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 };
