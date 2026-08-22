@@ -2,14 +2,15 @@ const MentorshipRequest = require('../models/MentorshipRequest');
 const User = require('../models/User');
 
 // Send mentorship request
-exports.sendRequest = async (req, res) => {
+exports.sendRequest = async (req, res, next) => {
   try {
-
     const { receiverId, senderId } = req.body;
 
     // Validate if senderId and receiverId are valid
     if (!receiverId || !senderId) {
-      return res.status(400).json({ error: 'Both senderId and receiverId are required' });
+      const error = new Error('Both senderId and receiverId are required');
+      error.statusCode = 400;
+      throw error;
     }
 
     // Check if a request already exists
@@ -18,7 +19,9 @@ exports.sendRequest = async (req, res) => {
     });
 
     if (existingReq) {
-      return res.status(409).json({ message: 'Request already sent to this profile' });
+      const error = new Error('Request already sent to this profile');
+      error.statusCode = 409;
+      throw error;
     }
 
     // Create a new mentorship request
@@ -26,36 +29,35 @@ exports.sendRequest = async (req, res) => {
 
     return res.status(201).json({ message: 'Request sent successfully', request });
   } catch (error) {
-    console.error('Error sending request:', error);
-    res.status(500).json({ error: 'Failed to send the mentorship request' });
+    next(error);
   }
 };
 
-
-
-exports.fetchRequests = async (req, res) => {
+// Fetch incoming requests for a user
+exports.fetchRequests = async (req, res, next) => {
   try {
     // First, find the user by their username
     const user = await User.findOne({
-      where: { username: req.params.username }, // Assuming the username is passed as a parameter
-      attributes: ['id', 'username'], // You can specify other fields if needed
+      where: { username: req.params.username },
+      attributes: ['id', 'username'],
     });
 
     if (!user) {
-      // If no user is found, return an error
-      return res.status(404).json({ message: 'User not found' });
+      const error = new Error('User not found');
+      error.statusCode = 404;
+      throw error;
     }
 
     // Now, fetch mentorship requests based on the userId
     const requests = await MentorshipRequest.findAll({
       where: {
-        receiverId: user.id, // Use the user's id to filter mentorship requests
+        receiverId: user.id,
       },
       include: [
         {
-          model: User, // Include sender details
+          model: User,
           as: 'sender',
-          attributes: ['id', 'username', 'fullName', 'email', 'bio', 'role'], // Specify fields to include
+          attributes: ['id', 'username', 'fullName', 'email', 'bio', 'role'],
         },
       ],
     });
@@ -74,28 +76,28 @@ exports.fetchRequests = async (req, res) => {
     const formattedRequests = uniqueRequests.map((request) => ({
       id: request.id,
       status: request.status,
-      sender: request.sender ? request.sender.dataValues : null, // Include sender's user profile
+      sender: request.sender ? request.sender.dataValues : null,
       receiverId: request.receiverId,
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
     }));
 
-    // Return the formatted unique requests with sender details
     res.json({ message: 'Fetched unique requests', requests: formattedRequests });
   } catch (error) {
-    console.error('Error fetching unique requests:', error.message); // Log the error
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
-
-exports.respondToRequest = async (req, res) => {
+// Accept or decline incoming requests
+exports.respondToRequest = async (req, res, next) => {
   try {
     const { receiverId, senderId, status } = req.body;
 
     // Validate incoming data
     if (!receiverId || !senderId || !status) {
-      return res.status(400).json({ error: 'Receiver ID, Sender ID, and Status are required' });
+      const error = new Error('Receiver ID, Sender ID, and Status are required');
+      error.statusCode = 400;
+      throw error;
     }
 
     // Find the mentorship request
@@ -103,7 +105,9 @@ exports.respondToRequest = async (req, res) => {
 
     // If request not found
     if (!request) {
-      return res.status(404).json({ error: 'Request not found' });
+      const error = new Error('Request not found');
+      error.statusCode = 404;
+      throw error;
     }
 
     // If the status is declined, delete the request
@@ -136,48 +140,51 @@ exports.respondToRequest = async (req, res) => {
       return res.json({ success: true, message: 'Request accepted and updated on both sides' });
     }
 
-    return res.status(400).json({ error: 'Invalid status value' });
+    const error = new Error('Invalid status value');
+    error.statusCode = 400;
+    throw error;
   } catch (error) {
-    console.error('Error responding to request:', error);
-    res.status(500).json({ error: 'Failed to process the request' });
+    next(error);
   }
 };
 
-
-
-
-exports.deleteRequest = async (req, res) => {
+// Delete a mentorship request
+exports.deleteRequest = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     // Validate ID
     if (!id) {
-      return res.status(400).json({ error: 'Request ID is required' });
+      const error = new Error('Request ID is required');
+      error.statusCode = 400;
+      throw error;
     }
 
     const request = await MentorshipRequest.findByPk(id);
 
     if (!request) {
-      return res.status(404).json({ error: 'Request not found' });
+      const error = new Error('Request not found');
+      error.statusCode = 404;
+      throw error;
     }
 
     await request.destroy();
     return res.json({ success: true, message: 'Request deleted successfully' });
   } catch (error) {
-    console.error('Error deleting request:', error);
-    res.status(500).json({ error: 'Failed to delete the request' });
+    next(error);
   }
 };
 
-
-
-exports.removeConnection = async (req, res) => {
+// Remove a connection
+exports.removeConnection = async (req, res, next) => {
   try {
     const { senderId, receiverId } = req.body;
 
     // Validate senderId and receiverId
     if (!senderId || !receiverId) {
-      return res.status(400).json({ error: 'Sender ID and Receiver ID are required' });
+      const error = new Error('Sender ID and Receiver ID are required');
+      error.statusCode = 400;
+      throw error;
     }
 
     // Find the accepted connection to remove
@@ -186,15 +193,15 @@ exports.removeConnection = async (req, res) => {
     });
 
     if (!connection) {
-      return res.status(404).json({ error: 'Connection not found or not accepted' });
+      const error = new Error('Connection not found or not accepted');
+      error.statusCode = 404;
+      throw error;
     }
 
     // Remove the connection
     await connection.destroy();
     return res.json({ success: true, message: 'Connection removed successfully' });
   } catch (error) {
-    console.error('Error removing connection:', error);
-    res.status(500).json({ error: 'Failed to remove the connection' });
+    next(error);
   }
 };
-

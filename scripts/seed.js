@@ -51,9 +51,7 @@ const seedDatabase = async () => {
         await sequelize.authenticate();
         
         console.log("Clearing existing data...");
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
         await sequelize.sync({ force: true });
-        await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
         
         console.log("Generating 50 random Indian users...");
         const usersData = generateUsers(50);
