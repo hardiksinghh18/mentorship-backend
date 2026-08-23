@@ -8,6 +8,7 @@ const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const mentorshipRoutes = require('./routes/mentorshipRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const courseRoutes = require('./routes/courseRoutes');
 const { fetchSingleUser, fetchAllUsers, fetchSingleUserById, fetchMatches } = require('./controllers/dataController');
 const verifyTokens = require('./middleware/verifyuser');
 const logout = require('./middleware/logout');
@@ -94,6 +95,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profile/update', profileRoutes);
 app.use('/api/connections', mentorshipRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/courses', courseRoutes);
 
 // Centralized error handling middleware
 const errorHandler = require('./middleware/errorHandler');

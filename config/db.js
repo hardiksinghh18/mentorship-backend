@@ -1,7 +1,4 @@
 const dns = require('dns');
-if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder('ipv4first');
-}
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
