@@ -104,6 +104,9 @@ exports.createCourse = async (req, res, next) => {
 // Fetch all courses
 exports.getAllCourses = async (req, res, next) => {
   try {
+    const { filter } = req.query;
+    const { Op } = require('sequelize');
+
     let requestUserId = null;
     const accessToken = req.cookies.accessToken;
     if (accessToken) {
@@ -119,7 +122,73 @@ exports.getAllCourses = async (req, res, next) => {
       }
     }
 
+    let whereClause = {};
+
+    if (requestUserId) {
+      if (filter === 'browse') {
+        const enrolledCourseIds = await CourseEnrollment.findAll({
+          where: { userId: requestUserId },
+          attributes: ['courseId']
+        }).then(enrollments => enrollments.map(e => e.courseId));
+
+        whereClause = {
+          creatorId: { [Op.ne]: requestUserId },
+        };
+        if (enrolledCourseIds.length > 0) {
+          whereClause.id = { [Op.notIn]: enrolledCourseIds };
+        }
+      } else if (filter === 'my-roadmaps') {
+        const enrolledCourseIds = await CourseEnrollment.findAll({
+          where: { userId: requestUserId, status: ['accepted', 'pending'] },
+          attributes: ['courseId']
+        }).then(enrollments => enrollments.map(e => e.courseId));
+
+        whereClause = {
+          [Op.or]: [
+            { creatorId: requestUserId }
+          ]
+        };
+        if (enrolledCourseIds.length > 0) {
+          whereClause[Op.or].push({ id: { [Op.in]: enrolledCourseIds } });
+        }
+      } else if (filter === 'teaching') {
+        whereClause = { creatorId: requestUserId };
+      } else if (filter === 'learning') {
+        const enrolledCourseIds = await CourseEnrollment.findAll({
+          where: { userId: requestUserId, status: 'accepted' },
+          attributes: ['courseId']
+        }).then(enrollments => enrollments.map(e => e.courseId));
+
+        if (enrolledCourseIds.length === 0) {
+          return res.status(200).json([]);
+        }
+
+        whereClause = {
+          id: { [Op.in]: enrolledCourseIds },
+          creatorId: { [Op.ne]: requestUserId }
+        };
+      } else if (filter === 'pending') {
+        const enrolledCourseIds = await CourseEnrollment.findAll({
+          where: { userId: requestUserId, status: 'pending' },
+          attributes: ['courseId']
+        }).then(enrollments => enrollments.map(e => e.courseId));
+
+        if (enrolledCourseIds.length === 0) {
+          return res.status(200).json([]);
+        }
+
+        whereClause = {
+          id: { [Op.in]: enrolledCourseIds }
+        };
+      }
+    } else {
+      if (['my-roadmaps', 'teaching', 'learning', 'pending'].includes(filter)) {
+        return res.status(200).json([]);
+      }
+    }
+
     const courses = await Course.findAll({
+      where: whereClause,
       include: [
         {
           model: User,
@@ -192,6 +261,7 @@ exports.getCourseDetails = async (req, res, next) => {
     // Optional enrollment context checking if request has user details
     let enrollmentStatus = null;
     let completedModules = [];
+    let requestUser = null;
 
     // Peek cookies directly if token exists without hard-gating the route
     const accessToken = req.cookies.accessToken;
@@ -199,7 +269,7 @@ exports.getCourseDetails = async (req, res, next) => {
       try {
         const jwt = require('jsonwebtoken');
         const decoded = jwt.verify(accessToken, process.env.ACCESS_TOKEN_KEY);
-        const requestUser = await User.findOne({ where: { email: decoded.email } });
+        requestUser = await User.findOne({ where: { email: decoded.email } });
         
         if (requestUser) {
           const enrollment = await CourseEnrollment.findOne({
@@ -215,9 +285,24 @@ exports.getCourseDetails = async (req, res, next) => {
       }
     }
 
+    const isCreator = requestUser && course.creatorId === requestUser.id;
+    const isEnrolled = enrollmentStatus === 'accepted' || isCreator;
+
+    let responseCourse = course.toJSON();
+    if (!isEnrolled) {
+      // Strip sensitive data from modules for non-enrolled users/guests
+      if (responseCourse.modules) {
+        responseCourse.modules = responseCourse.modules.map(mod => ({
+          id: mod.id,
+          orderIndex: mod.orderIndex,
+          title: mod.title
+        }));
+      }
+    }
+
     res.status(200).json({
       course: {
-        ...course.toJSON(),
+        ...responseCourse,
         enrolled: enrolledCount,
         capacity: course.maxStudents,
       },
