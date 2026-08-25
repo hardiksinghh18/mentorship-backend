@@ -8,6 +8,7 @@ router.get('/', courseController.getAllCourses);
 router.get('/:id', courseController.getCourseDetails);
 
 // Protected actions (requires valid cookie session)
+router.get('/creator/requests', requireAuth, courseController.getCreatorEnrollmentRequests);
 router.post('/', requireAuth, courseController.createCourse);
 router.post('/:id/join', requireAuth, courseController.requestEnrollment);
 router.get('/:id/requests', requireAuth, courseController.getEnrollmentRequests);

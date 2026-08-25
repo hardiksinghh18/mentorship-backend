@@ -187,15 +187,25 @@ exports.getAllCourses = async (req, res, next) => {
       }
     }
 
+    const includeModels = [
+      {
+        model: User,
+        as: 'creator',
+        attributes: ['id', 'fullName', 'username', 'email'],
+      }
+    ];
+
+    // Include modules when loading my-roadmaps or teaching/learning to extract dates
+    if (['my-roadmaps', 'teaching', 'learning'].includes(filter)) {
+      includeModels.push({
+        model: Module,
+        as: 'modules',
+      });
+    }
+
     const courses = await Course.findAll({
       where: whereClause,
-      include: [
-        {
-          model: User,
-          as: 'creator',
-          attributes: ['id', 'fullName', 'username', 'email'],
-        }
-      ],
+      include: includeModels,
       order: [['createdAt', 'DESC']],
     });
 
@@ -206,13 +216,22 @@ exports.getAllCourses = async (req, res, next) => {
         });
 
         let userEnrollmentStatus = null;
+        let completedModules = [];
         if (requestUserId) {
           const enrollment = await CourseEnrollment.findOne({
             where: { courseId: course.id, userId: requestUserId }
           });
           if (enrollment) {
             userEnrollmentStatus = enrollment.status;
+            completedModules = enrollment.completedModules || [];
           }
+        }
+
+        let pendingRequestsCount = 0;
+        if (requestUserId && course.creatorId === requestUserId) {
+          pendingRequestsCount = await CourseEnrollment.count({
+            where: { courseId: course.id, status: 'pending' }
+          });
         }
 
         return {
@@ -220,6 +239,8 @@ exports.getAllCourses = async (req, res, next) => {
           enrolled: enrolledCount,
           capacity: course.maxStudents,
           userEnrollmentStatus,
+          completedModules,
+          pendingRequestsCount,
         };
       })
     );
@@ -300,6 +321,24 @@ exports.getCourseDetails = async (req, res, next) => {
       }
     }
 
+    // Fetch enrolled members if user is enrolled or creator
+    let members = [];
+    if (isEnrolled) {
+      const enrolledMembers = await CourseEnrollment.findAll({
+        where: { courseId: id, status: 'accepted' },
+        include: [{
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'username', 'bio']
+        }],
+        order: [['createdAt', 'ASC']]
+      });
+      members = enrolledMembers.map(e => ({
+        ...e.user.toJSON(),
+        isCreator: e.userId === course.creatorId
+      }));
+    }
+
     res.status(200).json({
       course: {
         ...responseCourse,
@@ -308,6 +347,7 @@ exports.getCourseDetails = async (req, res, next) => {
       },
       enrollmentStatus,
       completedModules,
+      members,
     });
   } catch (error) {
     next(error);
@@ -475,6 +515,49 @@ exports.toggleModuleCompletion = async (req, res, next) => {
       message: 'Module completion updated successfully',
       completedModules: enrollment.completedModules,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Fetch all pending enrollment requests for all courses created by the request creator user
+exports.getCreatorEnrollmentRequests = async (req, res, next) => {
+  try {
+    const creatorId = req.user.id;
+
+    // Find all courses created by this user
+    const courses = await Course.findAll({
+      where: { creatorId },
+      attributes: ['id', 'title']
+    });
+
+    const courseIds = courses.map(c => c.id);
+    if (courseIds.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Find all pending enrollments for these courses
+    const enrollments = await CourseEnrollment.findAll({
+      where: {
+        courseId: courseIds,
+        status: 'pending'
+      },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'username', 'email', 'bio']
+        },
+        {
+          model: Course,
+          as: 'course',
+          attributes: ['id', 'title']
+        }
+      ],
+      order: [['createdAt', 'DESC']]
+    });
+
+    res.status(200).json(enrollments);
   } catch (error) {
     next(error);
   }
