@@ -1,5 +1,16 @@
 const MentorshipRequest = require('../models/MentorshipRequest');
 const User = require('../models/User');
+const { matchesCache, usersCache } = require('./dataController');
+
+// Helper: Clear server-side cache entries for a specific userId
+const invalidateCacheForUser = (userId) => {
+  for (const key of matchesCache.keys()) {
+    if (key.includes(userId)) matchesCache.delete(key);
+  }
+  for (const key of usersCache.keys()) {
+    if (key.includes(userId)) usersCache.delete(key);
+  }
+};
 
 // Send mentorship request
 exports.sendRequest = async (req, res, next) => {
@@ -26,6 +37,10 @@ exports.sendRequest = async (req, res, next) => {
 
     // Create a new mentorship request
     const request = await MentorshipRequest.create({ senderId, receiverId, status: 'pending' });
+
+    // Invalidate cached matches/users for both parties
+    invalidateCacheForUser(senderId);
+    invalidateCacheForUser(receiverId);
 
     return res.status(201).json({ message: 'Request sent successfully', request });
   } catch (error) {
@@ -113,6 +128,8 @@ exports.respondToRequest = async (req, res, next) => {
     // If the status is declined, delete the request
     if (status === 'declined') {
       await request.destroy();
+      invalidateCacheForUser(senderId);
+      invalidateCacheForUser(receiverId);
       return res.json({ success: true, message: 'Request declined and deleted' });
     }
 
@@ -139,6 +156,10 @@ exports.respondToRequest = async (req, res, next) => {
 
       return res.json({ success: true, message: 'Request accepted and updated on both sides' });
     }
+
+    // Invalidate cached matches/users for both parties
+    invalidateCacheForUser(senderId);
+    invalidateCacheForUser(receiverId);
 
     const error = new Error('Invalid status value');
     error.statusCode = 400;
@@ -200,6 +221,8 @@ exports.removeConnection = async (req, res, next) => {
 
     // Remove the connection
     await connection.destroy();
+    invalidateCacheForUser(senderId);
+    invalidateCacheForUser(receiverId);
     return res.json({ success: true, message: 'Connection removed successfully' });
   } catch (error) {
     next(error);

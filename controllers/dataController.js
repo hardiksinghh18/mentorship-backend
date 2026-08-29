@@ -5,6 +5,15 @@ const User = require('../models/User');
 const MentorshipRequest = require('../models/MentorshipRequest');
 const embeddingService = require('../services/embeddingService');
 
+// Simple in-memory cache for queries
+const matchesCache = new Map();
+const usersCache = new Map();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+// Export caches for invalidation from other controllers
+exports.matchesCache = matchesCache;
+exports.usersCache = usersCache;
+
 exports.fetchAllUsers = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -13,6 +22,13 @@ exports.fetchAllUsers = async (req, res, next) => {
 
     const { role, name, skills, currentUserId, minExperience, connectionStatus } = req.query;
     console.log("Fetching users with filters:", { role, name, skills, currentUserId, minExperience, connectionStatus });
+
+    // Check in-memory cache first
+    const cacheKey = `users_${currentUserId || 'anon'}_p${page}_l${limit}_r${role || ''}_n${name || ''}_s${skills || ''}_e${minExperience || ''}_cs${connectionStatus || ''}`;
+    const cached = usersCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      return res.status(200).json(cached.data);
+    }
 
     const sequelize = User.sequelize;
     const where = {
@@ -238,14 +254,19 @@ exports.fetchAllUsers = async (req, res, next) => {
       usersWithAI = users;
     }
 
-    res.status(200).json({
+    const responseData = {
       users: usersWithAI,
       totalCount: count,
       currentPage: page,
       totalPages: Math.ceil(count / limit),
       hasMore: page * limit < count,
       message: 'Fetched data for profiles'
-    });
+    };
+
+    // Cache the result
+    usersCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+
+    res.status(200).json(responseData);
   } catch (error) {
     next(error);
   }
@@ -371,37 +392,44 @@ function calculateSkillScore(userSkills, candidateSkills, isPeer) {
   }
 }
 
-// Dynamic Hybrid Matching Engine Controller
+// Dynamic Hybrid Matching Engine Controller (Optimized)
 exports.fetchMatches = async (req, res, next) => {
   try {
     const currentUserId = req.params.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
     const sequelize = User.sequelize;
 
-    // 1. Fetch current user profile
+    // 1. Check in-memory cache first
+    const cacheKey = `matches_${currentUserId}_p${page}_l${limit}`;
+    const cached = matchesCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      return res.status(200).json(cached.data);
+    }
+
+    // 2. Fetch current user profile
     const currentUser = await User.findByPk(currentUserId);
     if (!currentUser) {
       return res.status(404).json({ error: 'Current user not found' });
     }
 
-    // 2. Self-healing embedding generation (Lazy-loading for existing seeded profiles)
+    // 3. Parse current user embedding (must already exist — generated on profile setup/update)
     let currentUserEmbedding;
     if (!currentUser.profileEmbedding) {
-      console.log(`Generating initial profile embedding for user ${currentUser.username} dynamically...`);
-      const embeddingValues = await embeddingService.generateProfileEmbedding(currentUser);
-      if (embeddingValues) {
-        currentUserEmbedding = embeddingValues;
-        currentUser.profileEmbedding = JSON.stringify(embeddingValues);
-        await currentUser.save();
-      }
+      return res.status(200).json({
+        matches: [],
+        totalCount: 0,
+        currentPage: page,
+        totalPages: 0,
+        hasMore: false,
+        message: 'Profile embedding not yet generated. Please complete your profile setup.'
+      });
     } else {
       currentUserEmbedding = JSON.parse(currentUser.profileEmbedding);
     }
 
-    if (!currentUserEmbedding) {
-      return res.status(500).json({ error: 'Could not generate vector embedding for the current user.' });
-    }
-
-    // 3. Fetch list of connections to exclude (accepted or pending)
+    // 4. Fetch list of connections to exclude (accepted or pending)
     const activeConnectionIds = await MentorshipRequest.findAll({
       where: {
         [Op.or]: [
@@ -420,11 +448,12 @@ exports.fetchMatches = async (req, res, next) => {
       return Array.from(ids);
     });
 
-    // 4. Fetch all other users with complete profiles
+    // 5. Fetch top 100 closest users who ALREADY have embeddings (no lazy generation)
     const whereClause = {
       id: { [Op.ne]: currentUserId },
       role: { [Op.ne]: null },
-      bio: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] }
+      bio: { [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }] },
+      profileEmbedding: { [Op.ne]: null } // Only users with pre-computed embeddings
     };
 
     if (activeConnectionIds.length > 0) {
@@ -447,27 +476,27 @@ exports.fetchMatches = async (req, res, next) => {
           ]
         ]
       },
-      order: sequelize.literal(`"profileEmbedding" <=> '[${currentUserEmbedding.join(',')}]'::vector ASC`)
+      order: sequelize.literal(`"profileEmbedding" <=> '[${currentUserEmbedding.join(',')}]'::vector ASC`),
+      limit: 100 // Only fetch top 100 closest semantic matches from DB
     });
 
-    // 5. Compute Hybrid Compatibility Scores
+    // 6. Compute Hybrid Compatibility Scores (in-memory, no external calls)
     const matchedUsers = [];
 
-    for (const candidate of otherUsers) {
-      // If candidate embedding is missing, regenerate it (self-healing seeded users)
-      if (!candidate.profileEmbedding) {
-        try {
-          const embValues = await embeddingService.generateProfileEmbedding(candidate);
-          if (embValues) {
-            candidate.profileEmbedding = JSON.stringify(embValues); // pgvector needs bracket formatted string
-            await candidate.save();
-          }
-        } catch (e) {
-          console.error(`Lazy-load embedding failed for user ${candidate.username}:`, e.message);
-        }
+    const cleanSkills = (skills) => {
+      if (!skills) return [];
+      try {
+        const parsed = typeof skills === 'string' ? JSON.parse(skills) : skills;
+        if (Array.isArray(parsed)) return parsed;
+        return Object.values(parsed);
+      } catch {
+        return String(skills).split(',');
       }
+    };
 
-      // If both embeddings exist, compute similarity using pgvector calculation
+    const userSkills = cleanSkills(currentUser.skills).map(s => s.trim().toLowerCase());
+
+    for (const candidate of otherUsers) {
       const isPeer = currentUser.role === candidate.role;
       const dbSemanticSim = candidate.getDataValue('semanticSim');
       const semanticSim = dbSemanticSim !== null && !isNaN(dbSemanticSim)
@@ -515,18 +544,6 @@ exports.fetchMatches = async (req, res, next) => {
         if (expGap >= 3 && expGap <= 6) insights.push('Ideal Experience Match');
       }
 
-      const cleanSkills = (skills) => {
-        if (!skills) return [];
-        try {
-          const parsed = typeof skills === 'string' ? JSON.parse(skills) : skills;
-          if (Array.isArray(parsed)) return parsed;
-          return Object.values(parsed);
-        } catch {
-          return String(skills).split(',');
-        }
-      };
-
-      const userSkills = cleanSkills(currentUser.skills).map(s => s.trim().toLowerCase());
       const candidateSkills = cleanSkills(candidate.skills).map(s => s.trim().toLowerCase());
       const overlap = userSkills.filter(s => candidateSkills.includes(s));
 
@@ -555,27 +572,29 @@ exports.fetchMatches = async (req, res, next) => {
       });
     }
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-
-    // 6. Sort by highest compatibility score descending
+    // 7. Sort by highest compatibility score descending
     matchedUsers.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
 
     // Limit to top 20 matches total as requested: "show 20 results and on two pages"
     const topMatches = matchedUsers.slice(0, 20);
     const paginatedMatches = topMatches.slice(offset, offset + limit);
 
-    res.status(200).json({
+    const responseData = {
       matches: paginatedMatches,
       totalCount: topMatches.length,
       currentPage: page,
       totalPages: Math.ceil(topMatches.length / limit),
       hasMore: offset + limit < topMatches.length,
-      message: 'Successfully computed AI matches locally'
-    });
+      message: 'Successfully computed AI matches'
+    };
+
+    // 8. Cache the result
+    matchesCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+
+    res.status(200).json(responseData);
 
   } catch (error) {
     next(error);
   }
 };
+
